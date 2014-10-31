@@ -1,86 +1,217 @@
 <?php
-
+/**
+ * Create database Schema easily
+ *
+ * You can create database schema quickly with identical api as the laravel
+ * database driver does.
+ *
+ * @package    Kohana/Schema
+ * @category   Base
+ * @author     Birkir Gudjonsson
+ * @copyright  (c) 2014 Gudjonsen
+ * @license    http://kohanaphp.com/license
+ */
 class Schema {
 
+	// Execute queries
+	public static $execute = TRUE;
+
+	// Database instance name
+	public static $database_instance;
+
+	// Blueprint class name
+	public static $driver = 'Blueprint_MySQL';
+
 	/**
-	 * Create table
-	 * 
-	 * @param  [type] $name     [description]
-	 * @param  [type] $callback [description]
-	 * @return [type]           [description]
+	 * Construct new Schema instance
+	 *
+	 * @param  string $name
+	 * @return void
 	 */
-	public static function create($name, $callback)
+	public function __construct($name)
 	{
-		$table = Database_Table::factory($name);
+		// Set database instance name
+		Schema::$database_instance = $name;
 
-		// create new schema builder
-		$builder = Schema_Builder::factory($table);
+		// Get database config
+		$config = Kohana::$config->load('database')->$name;
 
-		// run callback
-		$callback($builder);
-
-		// builder returns table
-		echo Debug::vars($builder->table->create());
-	}
-
-	/**
-	 * Update table
-	 * 
-	 * @param  [type] $name     [description]
-	 * @param  [type] $callback [description]
-	 * @return [type]           [description]
-	 */
-	public static function table($name, $callback) {
-
-		$table = Database_Table::instance($name);
-
-		// create new schema builder
-		$builder = Schema_Builder::factory($table);
-
-		// run callback
-		$callback($builder);
-
-		// builder returns table
-		echo Debug::vars($builder->table->create());
-	}
-
-	/**
-	 * Drop table
-	 * 
-	 * @param  [type] $name      [description]
-	 * @param  [type] $if_exists [description]
-	 * @return [type]            [description]
-	 */
-	public static function drop($name, $if_exists = FALSE)
-	{
-		try
+		if ( ! isset($config['type']))
 		{
-			DB::drop('table', $name)->execute();
-		}
-		catch (Database_Exception $e)
-		{
-			return FALSE;
+			throw new Kohana_Exception('Database type not defined in :name configuration',
+				array(':name' => $name));
 		}
 
-		return TRUE;
+		// Set the driver class name
+		Schema::$driver = 'Blueprint_'.ucfirst($config['type']);
 	}
 
 	/**
-	 * Rename table
-	 * 
-	 * @param  string   $from Table to rename
-	 * @param  string   $to   New table name
-	 * @return Database
+	 * Setup database connection
+	 *
+	 * @param  string $name
+	 * @return Schema
+	 */
+	public static function db($name = NULL)
+	{
+		return new Schema($name);
+	}
+
+	/**
+	 * Compile SQL Schema from blueprint driver
+	 *
+	 * @param  Blueprint $blueprint
+	 * @return array
+	 */
+	public static function compile(Blueprint $blueprint)
+	{
+		// Get database instance
+		$db = Database::instance(Schema::$database_instance);
+
+		// Compile SQL schema
+		$sql = $blueprint->compile();
+
+		if (Schema::$execute === TRUE)
+		{
+			$db->query(Database::INSERT, $statement);
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Create a new table on the schema.
+	 *
+	 * @param  string    $table
+	 * @param  Closure   $callback
+	 * @return void
+	 */
+	public static function create($table, $callback = NULL)
+	{
+		// Get driver name
+		$driver = Schema::$driver;
+
+		// Bootstrap blueprint wrapper
+		$blueprint = new $driver($table);
+
+		if (is_callable($callback))
+		{
+			$callback($blueprint);
+		}
+
+		return static::compile($blueprint);
+	}
+
+	/**
+	 * Modify a table on the schema.
+	 *
+	 * @param  string    $table
+	 * @param  Closure   $callback
+	 * @return void
+	 */
+	public static function table($table, $callback)
+	{
+		// Get driver name
+		$driver = Schema::$driver;
+
+		// Bootstrap blueprint wrapper
+		$blueprint = new $driver($table, Blueprint::ALTER);
+
+		if (is_callable($callback))
+		{
+			$callback($blueprint);
+		}
+
+		return static::compile($blueprint);
+	}
+
+	/**
+	 * Rename a table on the schema.
+	 *
+	 * @param  string  $from
+	 * @param  string  $to
+	 * @return void
 	 */
 	public static function rename($from, $to)
 	{
-		$query = DB::query(Database::SELECT, 'RENAME TABLE :from TO :to');
+		// Get driver name
+		$driver = Schema::$driver;
 
-		$query->parameters(array(
-			':from' => $from,
-			':to' => $to
-		));
+		// Bootstrap blueprint wrapper
+		$blueprint = new $driver($from);
 
-		return $query->execute();
+		// Rename table
+		$blueprint->rename_table($from, $to);
+
+		return static::compile($blueprint);
+	}
+
+	/**
+	 * Drop a table from the schema.
+	 *
+	 * @param  string  $table
+	 * @return void
+	 */
+	public static function drop($table)
+	{
+		// Get driver name
+		$driver = Schema::$driver;
+
+		// Bootstrap blueprint wrapper
+		$blueprint = new $driver($table);
+
+		// Rename table
+		$blueprint->drop_table();
+
+		return static::compile($blueprint);
+	}
+
+	/**
+	 * Drop a table from the schema if it exists.
+	 *
+	 * @param  string  $table
+	 * @return void
+	 */
+	public static function drop_if_exists($table)
+	{
+		// Get driver name
+		$driver = Schema::$driver;
+
+		// Bootstrap blueprint wrapper
+		$blueprint = new $driver($table);
+
+		// Rename table
+		$blueprint->drop_table_if_exists();
+
+		return static::compile($blueprint);
+	}
+
+	/**
+	 * Determine if the given table exists.
+	 *
+	 * @param  string  $table
+	 * @return bool
+	 */
+	public static function has_table($table)
+	{
+		// Get connection
+		$db = Database::instance(Schema::$database_instance);
+
+		return (count($db->list_tables($table)) > 0);
+	}
+
+	/**
+	 * Determine if the given table has a given column.
+	 *
+	 * @param  string  $table
+	 * @param  string  $column
+	 * @return bool
+	 */
+	public static function has_column($table, $column)
+	{
+		// Get connection
+		$db = Database::instance(Schema::$database_instance);
+
+		return (count($db->list_columns($table, $column)) > 0);
 	}
 }
